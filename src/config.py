@@ -2,6 +2,7 @@
 Configuration file for the Compound V2 Wallet Scoring project.
 """
 import os
+import multiprocessing
 from pathlib import Path
 
 # Project directories
@@ -10,11 +11,21 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 RAW_DATA_DIR = os.path.join(DATA_DIR, "raw")
 PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
+CACHE_DIR = os.path.join(PROCESSED_DATA_DIR, "cache")
 
 # Ensure directories exist
 os.makedirs(RAW_DATA_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Performance optimization settings
+PERFORMANCE = {
+    "default_n_jobs": max(1, multiprocessing.cpu_count() - 1),  # Default to N-1 cores
+    "batch_size": 10000,  # Process data in batches of this size
+    "use_caching": True,  # Enable caching of intermediate results
+    "cache_expiry_days": 7,  # Cache files older than this will be regenerated
+}
 
 # Data processing parameters
 NUM_FILES_TO_PROCESS = 3  # Process the 3 largest files from the dataset
