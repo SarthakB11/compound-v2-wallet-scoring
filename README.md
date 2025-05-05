@@ -13,7 +13,13 @@ This project implements a machine learning model to score wallets interacting wi
 - **Hybrid scoring model** combining:
   - Heuristic rule-based scoring with feature weights
   - Anomaly detection for identifying unusual behavior patterns
+  - Advanced ML models and deep learning
 - **Wallet behavior analysis** with insights on high and low scoring wallets
+- **Advanced optimization components**:
+  - Feature selection to identify the most important indicators
+  - Automated hyperparameter tuning
+  - Deep learning models for complex pattern recognition
+  - Model integration for ensemble predictions
 
 ## Project Structure
 ```
@@ -29,6 +35,11 @@ This project implements a machine learning model to score wallets interacting wi
 │   ├── features/       # Feature engineering
 │   ├── models/         # Model implementation
 │   ├── scoring/        # Scoring system
+│   ├── advanced/       # Advanced optimization components
+│   │   ├── feature_selection.py    # Feature selection techniques
+│   │   ├── hyperparameter_tuning.py # Hyperparameter optimization
+│   │   ├── deep_learning.py        # Neural network models
+│   │   └── model_integration.py    # Ensemble model integration
 │   └── utils/          # Utility functions
 ├── requirements.txt    # Project dependencies
 ├── README.md           # Project documentation
@@ -38,6 +49,7 @@ This project implements a machine learning model to score wallets interacting wi
 ## Requirements
 - Python 3.8+
 - Libraries: pandas, numpy, scikit-learn, matplotlib, seaborn, jupyter, tqdm, polars, pyarrow, joblib, plotly
+- Advanced components: tensorflow, optuna, xgboost
 
 ## Setup and Installation
 
@@ -56,99 +68,98 @@ pip install -r requirements.txt
 ```
 
 ### Data Preparation
-1. Download the Compound V2 dataset from the provided Google Drive link
-2. Select the 3 largest files from the dataset
-3. Place the files in the `data/raw` directory
+Place your Compound V2 transaction data in the `data/raw/` directory:
+- `transactions.csv`: Contains transaction records
+- `users.csv`: Contains user information
 
-## Running the Pipeline
+## Usage
 
-### Full Pipeline
-To run the complete pipeline:
-
+### Basic Pipeline
+Run the complete pipeline:
 ```bash
-python src/main.py
+python src/pipeline.py
 ```
 
-This will execute all steps:
-1. Load and process raw data
-2. Preprocess data
-3. Generate features
-4. Detect anomalies
-5. Calculate heuristic scores
-6. Generate final scores and output
+This will:
+1. Load and preprocess transaction data
+2. Engineer features for each wallet
+3. Calculate heuristic scores
+4. Generate final wallet scores
 
-### Resume Pipeline
-If you want to resume from a specific stage:
-
+### Advanced Pipeline
+Run the pipeline with advanced optimization components:
 ```bash
-python src/main.py --skip-to [stage]
+python src/pipeline.py --advanced
 ```
 
-Available stages:
-- `load`: Start from loading data
-- `preprocess`: Start from preprocessing
-- `features`: Start from feature engineering
-- `anomaly`: Start from anomaly detection
-- `heuristic`: Start from heuristic scoring
-- `score`: Start from final scoring
+This will run all basic steps plus:
+1. Feature selection to identify optimal predictors
+2. Hyperparameter tuning for traditional models
+3. Deep learning model training
+4. Model integration with ensemble techniques
 
-### Individual Components
-You can also run individual components:
-
+### Specific Steps
+Run only specific steps of the pipeline:
 ```bash
-# Data loading
-python src/data/loader.py
-
-# Data preprocessing
-python src/data/preprocessor.py
-
-# Feature engineering
-python src/features/feature_engineering.py
-
-# Anomaly detection
-python src/models/anomaly_detector.py
-
-# Heuristic scoring
-python src/models/heuristic_scorer.py
-
-# Final scoring
-python src/scoring/scorer.py
+python src/pipeline.py --steps load,preprocess,engineer
 ```
 
-## Data Exploration
-A Jupyter notebook is provided for exploring the Compound V2 data. The notebook template is available in `notebooks/README.md`. You can create a new notebook with these cells to analyze the transaction data.
+### Output
+The final scores will be saved in:
+- `results/wallet_scores.csv`: Basic pipeline results
+- `results/integrated_wallet_scores.csv`: Advanced pipeline with ensemble models
 
-## Output
-After running the pipeline, the following outputs will be generated:
-
-- `results/wallet_scores.csv`: CSV file with the top 1,000 wallets, sorted by score
-- `results/all_wallet_scores.parquet`: Parquet file with scores for all wallets
-- `results/wallet_analysis.csv`: CSV file with detailed analysis of top and bottom wallets
-- `results/wallet_analysis_summary.md`: Markdown document with behavioral patterns analysis
-
-## Methodology
-The scoring methodology is based on:
-
-1. **Feature Engineering**: Extracting meaningful patterns from transaction data
-2. **Anomaly Detection**: Identifying unusual wallet behavior
-3. **Heuristic Scoring**: Assigning weights to different behavioral features
-4. **Score Normalization**: Transforming raw scores to the 0-100 range
-
-Key scoring factors:
-- Consistency of participation
-- Prudent collateralization maintenance
-- Timely repayments
-- Market diversification
-- Liquidation avoidance
-- Reasonable leverage
-
-## Customization
-You can customize the model by modifying parameters in `src/config.py`:
+## Configuration
+You can configure the system by modifying parameters in `src/config.py`:
 
 - `FEATURE_WEIGHTS`: Adjust the importance of different features
 - `ANOMALY_DETECTION`: Configure anomaly detection parameters
 - `SCORING`: Change the method for transforming raw scores to final scores
 - `OUTPUT_SETTINGS`: Modify output file settings
+- `ADVANCED_CONFIG`: Settings for advanced optimization components
+
+## Advanced Optimization Components
+
+### Feature Selection
+The feature selection module identifies the most predictive features using multiple techniques:
+- Correlation analysis
+- Mutual information
+- Random forest importance
+- Recursive feature elimination
+
+```bash
+python -m src.advanced.feature_selection --method combined --n-features 15
+```
+
+### Hyperparameter Tuning
+Automatically finds optimal model parameters using:
+- Grid search
+- Random search
+- Bayesian optimization with Optuna
+
+```bash
+python -m src.advanced.hyperparameter_tuning --model random_forest --method optuna
+```
+
+### Deep Learning Models
+Neural network models for wallet scoring:
+- Dense architectures of varying depth
+- Sequence models for transaction history
+- Regularization techniques to prevent overfitting
+
+```bash
+python -m src.advanced.deep_learning --architecture compare
+```
+
+### Model Integration
+Combines predictions from multiple models:
+- Voting ensemble
+- Stacking ensemble
+- Hybrid predictions with deep learning
+
+```bash
+python -m src.advanced.model_integration
+```
 
 ## License
 This project is provided for educational and research purposes.
