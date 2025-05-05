@@ -53,12 +53,16 @@ def setup():
     
     # Check if raw data exists
     if not os.path.exists(config.RAW_DATA_DIR) or not os.listdir(config.RAW_DATA_DIR):
-        logger.info("No data found in raw directory. Downloading dataset...")
-        success = download_dataset()
-        if not success:
-            logger.error("Failed to download dataset. Please download manually and place in data/raw directory.")
-            raise RuntimeError("Dataset download failed")
-        extract_largest_files()
+        logger.error("No data found in raw directory. Please run use_real_data.sh first.")
+        sys.exit(1)
+    
+    # Log the real data files being used
+    files = os.listdir(config.RAW_DATA_DIR)
+    logger.info(f"Using {len(files)} real Compound V2 data files for analysis:")
+    for file in files:
+        file_path = os.path.join(config.RAW_DATA_DIR, file)
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        logger.info(f"  - {file} ({file_size_mb:.2f} MB)")
 
 def run_pipeline(skip_to=None, optimize=True):
     """
