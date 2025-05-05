@@ -40,19 +40,19 @@ class WalletScorer:
         os.makedirs(self.processed_data_dir, exist_ok=True)
         os.makedirs(self.results_dir, exist_ok=True)
     
-    def load_heuristic_scores(self):
+    def load_wallet_scores(self):
         """
-        Load heuristic scores.
+        Load wallet scores.
         
         Returns:
-            pd.DataFrame: Heuristic scores
+            pd.DataFrame: Wallet scores
         """
-        score_file_path = os.path.join(self.processed_data_dir, "heuristic_scores.parquet")
+        score_file_path = os.path.join(self.processed_data_dir, "wallet_scores.parquet")
         if not os.path.exists(score_file_path):
-            raise FileNotFoundError(f"Heuristic scores file not found: {score_file_path}")
+            raise FileNotFoundError(f"Wallet scores file not found: {score_file_path}")
         
         scores_df = pd.read_parquet(score_file_path)
-        logger.info(f"Loaded heuristic scores for {len(scores_df)} wallets from {score_file_path}")
+        logger.info(f"Loaded wallet scores for {len(scores_df)} wallets from {score_file_path}")
         
         return scores_df
     
@@ -70,6 +70,12 @@ class WalletScorer:
         
         # Create a copy of the input DataFrame
         final_df = scores_df.copy()
+        
+        # If credit_score is already present, use it directly
+        if 'credit_score' in final_df.columns:
+            logger.info("Credit scores already calculated, using existing scores")
+            final_df['final_score'] = final_df['credit_score']
+            return final_df
         
         # Get raw scores
         raw_scores = final_df['raw_score'].values
@@ -256,67 +262,80 @@ class WalletScorer:
                         
                         f.write("\n")
             
-            f.write("## Behavioral Patterns\n\n")
-            f.write("### High-Scoring Wallet Patterns\n\n")
-            f.write("High-scoring wallets typically exhibit these behavior patterns:\n")
-            f.write("- Maintain healthy collateralization ratios\n")
-            f.write("- Show consistent long-term participation\n")
-            f.write("- Rarely or never experience liquidations\n")
-            f.write("- Engage with multiple markets (diversification)\n")
-            f.write("- Have high repayment ratios\n\n")
+            # Add overall statistics
+            f.write("## Overall Statistics\n\n")
+            f.write(f"- Total wallets scored: {len(final_df)}\n")
+            f.write(f"- Score range: {final_df['final_score'].min()} - {final_df['final_score'].max()}\n")
+            f.write(f"- Mean score: {final_df['final_score'].mean():.2f}\n")
+            f.write(f"- Median score: {final_df['final_score'].median()}\n")
             
-            f.write("### Low-Scoring Wallet Patterns\n\n")
-            f.write("Low-scoring wallets typically exhibit these behavior patterns:\n")
-            f.write("- Experience multiple liquidations\n")
-            f.write("- Operate with high loan-to-value ratios\n")
-            f.write("- Spend significant time near liquidation thresholds\n")
-            f.write("- Show patterns of high leverage\n")
-            f.write("- May exhibit unusual transaction patterns flagged by anomaly detection\n")
-            
+            if features_df is not None:
+                f.write("\n### Feature Insights\n\n")
+                
+                # Add key feature correlations with score
+                corr_df = pd.concat([
+                    features_df,
+                    final_df[['wallet', 'final_score']]
+                ], axis=1).drop_duplicates(subset=['wallet'])
+                
+                important_features = ['tx_count', 'wallet_age_days', 'borrow_count', 
+                                     'repay_count', 'market_count', 'liquidation_count_borrower']
+                
+                f.write("Feature correlations with score:\n\n")
+                for feature in important_features:
+                    if feature in corr_df.columns:
+                        correlation = corr_df[['final_score', feature]].corr().iloc[0, 1]
+                        f.write(f"- {feature}: {correlation:.3f}\n")
+        
         logger.info(f"Saved wallet analysis summary to {summary_path}")
         
-        return analysis_wallets
+        return {
+            'top_wallets': top_wallets,
+            'bottom_wallets': bottom_wallets,
+            'analysis_wallets': analysis_wallets
+        }
     
     def generate_scores(self):
         """
-        Generate final wallet scores.
+        Generate final wallet credit scores.
         
         Returns:
-            pd.DataFrame: DataFrame with wallet scores
+            pd.DataFrame: Wallet scores
         """
-        # Load heuristic scores
-        heuristic_df = self.load_heuristic_scores()
-        
-        # Transform to final 0-100 scale
-        final_df = self.transform_to_final_score(heuristic_df)
-        
-        # Generate output files
-        output_df = self.generate_output(final_df)
-        
-        # Load features for analysis if available
         try:
-            features_path = os.path.join(self.processed_data_dir, "wallet_features.parquet")
-            features_df = pd.read_parquet(features_path)
+            # Load wallet scores
+            scores_df = self.load_wallet_scores()
+            
+            # Transform to final score
+            final_df = self.transform_to_final_score(scores_df)
+            
+            # Generate output
+            output_df = self.generate_output(final_df)
+            
+            # Load features if available for analysis
+            features_file_path = os.path.join(self.processed_data_dir, "wallet_features.parquet")
+            features_df = None
+            if os.path.exists(features_file_path):
+                features_df = pd.read_parquet(features_file_path)
             
             # Analyze top and bottom wallets
-            analysis_df = self.analyze_top_and_bottom_wallets(final_df, features_df)
-        except FileNotFoundError:
-            logger.warning("Could not find features file for wallet analysis")
-            # Analyze without features
-            analysis_df = self.analyze_top_and_bottom_wallets(final_df)
-        
-        return output_df
+            self.analyze_top_and_bottom_wallets(final_df, features_df)
+            
+            return output_df
+            
+        except Exception as e:
+            logger.error(f"Failed to generate wallet scores: {str(e)}", exc_info=True)
+            raise
 
 def main():
     """
-    Main function to generate wallet scores.
+    Main function to run the wallet scorer.
     """
     scorer = WalletScorer()
-    output_df = scorer.generate_scores()
-    
-    print(f"Generated scores for top {len(output_df)} wallets")
-    print("\nTop 10 wallets:")
-    print(output_df.head(10))
+    scores_df = scorer.generate_scores()
+    print(f"Generated scores for {len(scores_df)} wallets")
+    print("\nTop 5 wallets by score:")
+    print(scores_df.head())
     
 if __name__ == "__main__":
     main() 
