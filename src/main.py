@@ -14,6 +14,7 @@ from src.features.feature_engineering import FeatureEngineer
 from src.models.anomaly_detector import AnomalyDetector
 from src.models.heuristic_scorer import HeuristicScorer
 from src.scoring.scorer import WalletScorer
+from src.data.download import download_dataset, extract_largest_files
 import src.config as config
 
 # Configure logging
@@ -34,12 +35,24 @@ def setup():
     """
     # Create necessary directories
     os.makedirs("logs", exist_ok=True)
+    os.makedirs(config.RAW_DATA_DIR, exist_ok=True)
+    os.makedirs(config.PROCESSED_DATA_DIR, exist_ok=True)
+    os.makedirs(config.RESULTS_DIR, exist_ok=True)
     
     # Log system information
     logger.info(f"Starting Compound V2 wallet scoring pipeline")
     logger.info(f"Working directory: {os.getcwd()}")
     logger.info(f"Data directory: {config.DATA_DIR}")
     logger.info(f"Results directory: {config.RESULTS_DIR}")
+    
+    # Check if raw data exists
+    if not os.path.exists(config.RAW_DATA_DIR) or not os.listdir(config.RAW_DATA_DIR):
+        logger.info("No data found in raw directory. Downloading dataset...")
+        success = download_dataset()
+        if not success:
+            logger.error("Failed to download dataset. Please download manually and place in data/raw directory.")
+            raise RuntimeError("Dataset download failed")
+        extract_largest_files()
 
 def run_pipeline(skip_to=None):
     """
