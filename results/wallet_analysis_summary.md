@@ -2,122 +2,102 @@
 
 ## Top-Scoring Wallets
 
-### Wallet: 1234567890... (Score: 52.0)
+### Wallet: d36827efb7... (Score: 100)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 5
+- Account age: 14.7 days
+- Markets: 1
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.5%
 
-### Wallet: abcdefabcd... (Score: 49.0)
+### Wallet: 9469c98be5... (Score: 100)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 3
+- Account age: 9.8 days
+- Markets: 1
 - Liquidations: 0
-- Avg LTV: 0.99
-- Time near liquidation: 99.5%
 
-### Wallet: 0123456789... (Score: 39.0)
+### Wallet: de2e306879... (Score: 100)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 3
+- Account age: 9.1 days
+- Markets: 1
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.6%
 
-### Wallet: fedcbafedc... (Score: 38.0)
+### Wallet: 7cb440dca0... (Score: 100)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 4
+- Account age: 8.3 days
+- Markets: 1
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.6%
 
-### Wallet: 9876543210... (Score: 34.0)
+### Wallet: 7059e6023a... (Score: 100)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 3
+- Account age: 5.7 days
+- Markets: 1
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.6%
 
 ## Bottom-Scoring Wallets
 
-### Wallet: 1234567890... (Score: 52.0)
+### Wallet: 794dec90a3... (Score: 0)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 313
+- Account age: 265.0 days
+- Markets: 4
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.5%
 
-### Wallet: abcdefabcd... (Score: 49.0)
+### Wallet: dd1c352901... (Score: 0)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 2
+- Account age: 213.6 days
+- Markets: 2
 - Liquidations: 0
-- Avg LTV: 0.99
-- Time near liquidation: 99.5%
 
-### Wallet: 0123456789... (Score: 39.0)
+### Wallet: 5d3a427b1e... (Score: 0)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 3
+- Account age: 243.1 days
+- Markets: 2
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.6%
 
-### Wallet: fedcbafedc... (Score: 38.0)
+### Wallet: 2489f833f1... (Score: 0)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 2
+- Account age: 114.8 days
+- Markets: 2
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.6%
 
-### Wallet: 9876543210... (Score: 34.0)
+### Wallet: 8f9e6102c4... (Score: 0)
 
 Key characteristics:
-- Transactions: 900
-- Account age: 83.1 days
-- Markets: 8
+- Transactions: 2
+- Account age: 188.0 days
+- Markets: 1
 - Liquidations: 0
-- Avg LTV: 1.00
-- Time near liquidation: 99.6%
 
 ## Overall Statistics
 
-- Total wallets scored: 5
-- Score range: 34.0 - 52.0
-- Mean score: 42.40
-- Median score: 39.0
+- Total wallets scored: 13484
+- Score range: 0 - 100
+- Mean score: 50.00
+- Median score: 50.0
 
 ### Feature Insights
 
 Feature correlations with score:
 
-- tx_count: nan
-- wallet_age_days: nan
-- borrow_count: nan
-- repay_count: nan
-- market_count: nan
+- tx_count: -0.128
+- wallet_age_days: -0.417
+- borrow_count: -0.102
+- repay_count: -0.058
+- market_count: -0.315
 - liquidation_count_borrower: nan
