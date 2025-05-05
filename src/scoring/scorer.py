@@ -295,12 +295,15 @@ class WalletScorer:
             'analysis_wallets': analysis_wallets
         }
     
-    def generate_scores(self):
+    def generate_scores(self, optimize=True):
         """
-        Generate final wallet credit scores.
+        Generate final wallet scores.
+        
+        Args:
+            optimize (bool): Whether to use optimized algorithms
         
         Returns:
-            pd.DataFrame: Wallet scores
+            pd.DataFrame: DataFrame with final wallet scores
         """
         try:
             # Load wallet scores

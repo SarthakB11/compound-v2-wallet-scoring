@@ -162,12 +162,15 @@ class AnomalyDetector:
         
         return anomaly_df
     
-    def detect_anomalies(self):
+    def detect_anomalies(self, optimize=True):
         """
-        Detect anomalies in wallet behavior.
+        Detect anomalies in wallet features.
+        
+        Args:
+            optimize (bool): Whether to use optimized algorithms
         
         Returns:
-            pd.DataFrame: DataFrame with anomaly scores
+            pd.DataFrame: Anomaly detection results
         """
         # Load features
         features_df = pd.read_parquet(self.features_file)

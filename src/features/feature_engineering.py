@@ -346,7 +346,7 @@ class FeatureEngineer:
                     # Convert to seconds, then days
                     time_intervals = []
                     for i in range(len(timestamps) - 1):
-                        interval = (timestamps[i+1] - timestamps[i]).total_seconds() / (24 * 3600)
+                        interval = (timestamps[i+1] - timestamps[i]) / np.timedelta64(1, 'D')
                         time_intervals.append(interval)
                     
                     if time_intervals:

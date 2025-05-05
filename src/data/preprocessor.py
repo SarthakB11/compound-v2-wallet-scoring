@@ -230,15 +230,16 @@ class DataPreprocessor:
         wallet_df.to_parquet(wallet_file_path, index=False)
         logger.info(f"Saved wallet summary data to {wallet_file_path}")
     
-    def process(self, input_file=None):
+    def process(self, input_file=None, optimize=True):
         """
-        Run the full preprocessing pipeline.
+        Process transaction data to prepare for feature engineering.
         
         Args:
-            input_file (str, optional): Path to the input file
-            
+            input_file (str, optional): Input file path (defaults to processed_transactions.csv)
+            optimize (bool): Whether to use optimized algorithms
+        
         Returns:
-            tuple: (transaction_df, wallet_df)
+            tuple: (transaction_df, wallet_df) processed transactions and wallet summary
         """
         # Load data
         transaction_df = self.load_data(input_file)
