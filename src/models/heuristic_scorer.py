@@ -251,29 +251,37 @@ class HeuristicScorer:
         # Apply score adjustments
         adjusted_df = self.apply_score_adjustments(scores_df)
         
-        # Keep only necessary columns for the output
-        output_columns = ['wallet', 'raw_score']
-        output_df = adjusted_df[output_columns].copy()
+        # Scale score to 0-100 range
+        final_df = adjusted_df.copy()
+        final_df['credit_score'] = np.round(final_df['raw_score'] * 100)
         
-        # Save the scores
-        scores_path = os.path.join(self.processed_data_dir, "heuristic_scores.parquet")
-        output_df.to_parquet(scores_path, index=False)
-        logger.info(f"Saved heuristic scores for {len(output_df)} wallets to {scores_path}")
+        # Create readable grade levels
+        bins = [0, 20, 40, 60, 80, 100]
+        labels = ['F', 'D', 'C', 'B', 'A']
+        final_df['credit_grade'] = pd.cut(final_df['credit_score'], bins=bins, labels=labels)
         
-        return output_df
+        # Select columns for output
+        result_df = final_df[['wallet', 'credit_score', 'credit_grade', 'raw_score']].copy()
+        
+        # Sort by credit score (descending)
+        result_df = result_df.sort_values('credit_score', ascending=False)
+        
+        # Save results
+        output_file = os.path.join(self.processed_data_dir, "wallet_scores.parquet")
+        result_df.to_parquet(output_file, index=False)
+        logger.info(f"Saved wallet scores for {len(result_df)} wallets to {output_file}")
+        
+        return result_df
 
 def main():
     """
-    Main function to run heuristic scoring.
+    Main function to run the heuristic scorer.
     """
     scorer = HeuristicScorer()
     scores_df = scorer.score_wallets()
-    
     print(f"Scored {len(scores_df)} wallets")
-    print("\nTop 5 wallets by score:")
-    print(scores_df.sort_values('raw_score', ascending=False).head())
-    print("\nBottom 5 wallets by score:")
-    print(scores_df.sort_values('raw_score', ascending=True).head())
+    print("\nTop 5 wallets by credit score:")
+    print(scores_df.head())
     
 if __name__ == "__main__":
     main() 
