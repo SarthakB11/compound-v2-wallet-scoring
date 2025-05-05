@@ -157,3 +157,41 @@ This project is provided for educational and research purposes.
 - Compound V2 Protocol
 - Zeru Finance for the problem statement
 
+## Performance Optimizations
+
+The project includes several performance optimizations to speed up processing and handle large-scale data efficiently:
+
+### Parallel Processing
+- Multiprocessing support throughout the pipeline
+- Configurable number of CPU cores with `--n-jobs` parameter
+- Automatic detection of available cores in `run_pipeline.sh`
+
+### Caching Mechanisms
+- Feature caching to avoid recalculating expensive operations
+- Intelligent file caching with timestamp-based invalidation
+- In-memory data caching for repeated operations
+
+### Algorithmic Improvements
+- Vectorized operations for feature calculations
+- Batch processing for scoring calculations
+- Early termination for unchanged data
+
+### Usage
+Run the pipeline with parallel processing:
+```bash
+./run_pipeline.sh
+```
+
+Or specify the number of cores manually:
+```bash
+python src/main.py --n-jobs 4
+```
+
+For individual components:
+```bash
+python src/features/feature_engineering.py --n-jobs 4
+python src/models/heuristic_scorer.py --n-jobs 4
+```
+
+These optimizations significantly reduce processing time, especially for large datasets and complex feature calculations.
+
