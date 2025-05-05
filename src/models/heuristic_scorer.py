@@ -6,6 +6,8 @@ import logging
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import pickle
+from functools import lru_cache
 
 import src.config as config
 
@@ -28,8 +30,12 @@ class HeuristicScorer:
         # Feature weights for scoring
         self.feature_weights = config.FEATURE_WEIGHTS
         
+        # Cache for optimizing data loading
+        self._cached_data = {}
+        
         # Ensure directory exists
         os.makedirs(self.processed_data_dir, exist_ok=True)
+        os.makedirs(config.CACHE_DIR, exist_ok=True)
     
     def load_features(self):
         """
@@ -38,12 +44,42 @@ class HeuristicScorer:
         Returns:
             pd.DataFrame: Wallet features
         """
+        # Use cached data if available
+        if 'features_df' in self._cached_data:
+            logger.info(f"Using cached features for {len(self._cached_data['features_df'])} wallets")
+            return self._cached_data['features_df']
+        
         features_file_path = os.path.join(self.processed_data_dir, "wallet_features.parquet")
+        # Check for cached file
+        cache_file = os.path.join(config.CACHE_DIR, "features_cache.pkl")
+        
+        if os.path.exists(cache_file) and os.path.getmtime(cache_file) > os.path.getmtime(features_file_path):
+            try:
+                logger.info(f"Loading features from cache file {cache_file}")
+                with open(cache_file, 'rb') as f:
+                    features_df = pickle.load(f)
+                logger.info(f"Loaded cached features for {len(features_df)} wallets")
+                self._cached_data['features_df'] = features_df
+                return features_df
+            except Exception as e:
+                logger.warning(f"Failed to load features from cache: {str(e)}")
+        
         if not os.path.exists(features_file_path):
             raise FileNotFoundError(f"Features file not found: {features_file_path}")
         
         features_df = pd.read_parquet(features_file_path)
         logger.info(f"Loaded features for {len(features_df)} wallets from {features_file_path}")
+        
+        # Cache the loaded data
+        self._cached_data['features_df'] = features_df
+        
+        # Save to cache file for future use
+        try:
+            with open(cache_file, 'wb') as f:
+                pickle.dump(features_df, f)
+            logger.info(f"Saved features to cache file {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to save features to cache: {str(e)}")
         
         return features_df
     
@@ -54,13 +90,43 @@ class HeuristicScorer:
         Returns:
             pd.DataFrame: Anomaly scores
         """
+        # Use cached data if available
+        if 'anomaly_df' in self._cached_data:
+            logger.info(f"Using cached anomaly scores for {len(self._cached_data['anomaly_df'])} wallets")
+            return self._cached_data['anomaly_df']
+        
         anomaly_file_path = os.path.join(self.processed_data_dir, "anomaly_scores.parquet")
+        # Check for cached file
+        cache_file = os.path.join(config.CACHE_DIR, "anomaly_cache.pkl")
+        
+        if os.path.exists(cache_file) and os.path.exists(anomaly_file_path) and os.path.getmtime(cache_file) > os.path.getmtime(anomaly_file_path):
+            try:
+                logger.info(f"Loading anomaly scores from cache file {cache_file}")
+                with open(cache_file, 'rb') as f:
+                    anomaly_df = pickle.load(f)
+                logger.info(f"Loaded cached anomaly scores for {len(anomaly_df)} wallets")
+                self._cached_data['anomaly_df'] = anomaly_df
+                return anomaly_df
+            except Exception as e:
+                logger.warning(f"Failed to load anomaly scores from cache: {str(e)}")
+        
         if not os.path.exists(anomaly_file_path):
             logger.warning(f"Anomaly scores file not found: {anomaly_file_path}")
             return None
         
         anomaly_df = pd.read_parquet(anomaly_file_path)
         logger.info(f"Loaded anomaly scores for {len(anomaly_df)} wallets from {anomaly_file_path}")
+        
+        # Cache the loaded data
+        self._cached_data['anomaly_df'] = anomaly_df
+        
+        # Save to cache file for future use
+        try:
+            with open(cache_file, 'wb') as f:
+                pickle.dump(anomaly_df, f)
+            logger.info(f"Saved anomaly scores to cache file {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to save anomaly scores to cache: {str(e)}")
         
         return anomaly_df
     
@@ -82,16 +148,31 @@ class HeuristicScorer:
         
         # Add anomaly scores if available
         if anomaly_df is not None:
-            # Merge on wallet address
-            scoring_df = scoring_df.merge(
-                anomaly_df[['wallet', 'anomaly_score']], 
-                on='wallet', 
-                how='left'
-            )
+            # Merge on wallet address - optimized with sorted merge
+            if 'wallet' in scoring_df.columns and 'wallet' in anomaly_df.columns:
+                # Sort both DataFrames by wallet for faster merge
+                scoring_df = scoring_df.sort_values('wallet')
+                anomaly_df_sorted = anomaly_df.sort_values('wallet')
+                
+                # Merge using sorted DataFrames
+                scoring_df = pd.merge(
+                    scoring_df,
+                    anomaly_df_sorted[['wallet', 'anomaly_score']],
+                    on='wallet',
+                    how='left'
+                )
+            else:
+                # Fall back to regular merge if column names are different
+                scoring_df = scoring_df.merge(
+                    anomaly_df[['wallet', 'anomaly_score']], 
+                    on='wallet', 
+                    how='left'
+                )
             
             # Fill missing anomaly scores (if any)
-            if scoring_df['anomaly_score'].isna().any():
-                logger.warning(f"Found {scoring_df['anomaly_score'].isna().sum()} wallets without anomaly scores")
+            missing_anomaly_count = scoring_df['anomaly_score'].isna().sum()
+            if missing_anomaly_count > 0:
+                logger.warning(f"Found {missing_anomaly_count} wallets without anomaly scores")
                 scoring_df['anomaly_score'] = scoring_df['anomaly_score'].fillna(0.5)  # Neutral score
         else:
             # Add a default anomaly score column
@@ -106,12 +187,34 @@ class HeuristicScorer:
         
         return scoring_df
     
-    def calculate_weighted_score(self, scoring_df):
+    @lru_cache(maxsize=1024)
+    def _normalize_value(self, value, min_val, max_val):
+        """
+        Normalize a value to [0, 1] range with caching.
+        
+        Args:
+            value (float): Value to normalize
+            min_val (float): Minimum value in the range
+            max_val (float): Maximum value in the range
+            
+        Returns:
+            float: Normalized value
+        """
+        if pd.isna(value):
+            return 0.5  # Default value for NaN
+            
+        if max_val > min_val:
+            return (value - min_val) / (max_val - min_val)
+        else:
+            return 0.5  # Default for constant features
+    
+    def calculate_weighted_score(self, scoring_df, optimize=True):
         """
         Calculate a weighted score based on features.
         
         Args:
             scoring_df (pd.DataFrame): Features for scoring
+            optimize (bool): Whether to use optimized algorithms
             
         Returns:
             pd.DataFrame: DataFrame with calculated scores
@@ -121,48 +224,120 @@ class HeuristicScorer:
         # Create a copy of the input DataFrame
         scores_df = scoring_df.copy()
         
-        # Calculate raw score based on weighted features
-        scores_df['raw_score'] = 0
-        
         # Filter to only use weights for available features
         available_weights = {
             feature: weight for feature, weight in self.feature_weights.items()
             if feature in scores_df.columns
         }
         
-        # Calculate score components for each feature
-        for feature, weight in tqdm(available_weights.items(), desc="Calculating feature scores"):
-            # Skip if the feature has no data
-            if feature not in scores_df.columns:
-                continue
-                
-            # Log feature stats
+        # Log feature stats
+        for feature, weight in available_weights.items():
             logger.info(f"Feature: {feature}, Weight: {weight}")
             logger.info(f"  Min: {scores_df[feature].min()}, Max: {scores_df[feature].max()}, Mean: {scores_df[feature].mean()}")
+        
+        if optimize:
+            # Optimized vectorized calculations - much faster than row-by-row
             
-            # Create a normalized feature column
-            # This helps ensure comparable scales across features
-            norm_col = f"{feature}_norm"
+            # Initialize raw score column
+            scores_df['raw_score'] = 0
+            scores_df['feature_contributions'] = None
             
-            # Normalize the feature to [0, 1] range
-            if scores_df[feature].min() != scores_df[feature].max():
-                scores_df[norm_col] = (scores_df[feature] - scores_df[feature].min()) / (
-                    scores_df[feature].max() - scores_df[feature].min()
-                )
-            else:
-                scores_df[norm_col] = 0  # If all values are identical
+            # Precompute feature min/max values for normalization
+            feature_mins = {feature: scores_df[feature].min() for feature in available_weights}
+            feature_maxs = {feature: scores_df[feature].max() for feature in available_weights}
             
-            # For some features, lower values are better
-            # If the weight is negative, we want to invert the feature
-            if weight < 0:
-                scores_df[norm_col] = 1 - scores_df[norm_col]
-                weight = abs(weight)  # Use positive weight value for calculation
+            # Calculate normalized features and contributions in a vectorized way
+            for feature, weight in tqdm(available_weights.items(), desc="Calculating feature scores"):
+                # Skip if the feature is all missing
+                if scores_df[feature].isna().all():
+                    continue
+                
+                # Create a normalized feature column
+                min_val = feature_mins[feature]
+                max_val = feature_maxs[feature]
+                
+                if max_val > min_val:
+                    # Normalize the feature to [0, 1] range - vectorized
+                    normalized_feature = (scores_df[feature] - min_val) / (max_val - min_val)
+                    
+                    # For negative weights, invert the feature
+                    if weight < 0:
+                        normalized_feature = 1 - normalized_feature
+                        weight_abs = abs(weight)
+                    else:
+                        weight_abs = weight
+                    
+                    # Calculate contribution and add to raw score
+                    contribution = normalized_feature * weight_abs
+                    scores_df['raw_score'] += contribution
+                    
+                    # Store feature contribution for transparency
+                    scores_df[f'contribution_{feature}'] = contribution
             
-            # Calculate this feature's contribution to the raw score
-            scores_df['raw_score'] += scores_df[norm_col] * weight
+            # Store contribution information
+            scores_df['feature_contributions'] = scores_df.apply(
+                lambda row: {f: row[f'contribution_{f}'] for f in available_weights.keys() 
+                            if f'contribution_{f}' in row}, 
+                axis=1
+            )
             
-            # Remove temporary normalized column
-            scores_df = scores_df.drop(columns=[norm_col])
+            # Clean up temporary columns
+            for feature in available_weights.keys():
+                if f'contribution_{feature}' in scores_df.columns:
+                    scores_df = scores_df.drop(columns=[f'contribution_{feature}'])
+            
+        else:
+            # Original implementation (slower but works row by row)
+            # Initialize score columns
+            scores_df['raw_score'] = 0
+            scores_df['feature_contributions'] = None
+            
+            # Calculate feature min/max for normalization
+            feature_mins = {}
+            feature_maxs = {}
+            for feature in available_weights.keys():
+                feature_mins[feature] = scores_df[feature].min() 
+                feature_maxs[feature] = scores_df[feature].max()
+            
+            # Process each wallet
+            for idx, row in tqdm(scores_df.iterrows(), total=len(scores_df), desc="Calculating wallet scores"):
+                raw_score = 0
+                contributions = {}
+                
+                for feature, weight in available_weights.items():
+                    if feature not in row:
+                        continue
+                        
+                    feature_val = row[feature]
+                    if pd.isna(feature_val):
+                        continue
+                    
+                    # Normalize the feature to [0, 1] range
+                    min_val = feature_mins[feature]
+                    max_val = feature_maxs[feature]
+                    
+                    if max_val > min_val:
+                        norm_val = (feature_val - min_val) / (max_val - min_val)
+                    else:
+                        norm_val = 0.5  # Default for constant features
+                    
+                    # For negative weights, invert the normalized value
+                    if weight < 0:
+                        norm_val = 1 - norm_val
+                        weight_abs = abs(weight)
+                    else:
+                        weight_abs = weight
+                    
+                    # Calculate contribution to raw score
+                    contribution = norm_val * weight_abs
+                    raw_score += contribution
+                    
+                    # Store contribution
+                    contributions[feature] = contribution
+                
+                # Update scores DataFrame
+                scores_df.at[idx, 'raw_score'] = raw_score
+                scores_df.at[idx, 'feature_contributions'] = contributions
         
         # Normalize the raw score by the sum of weights
         sum_weights = sum(abs(w) for w in available_weights.values())
@@ -174,12 +349,13 @@ class HeuristicScorer:
         
         return scores_df
     
-    def apply_score_adjustments(self, scores_df):
+    def apply_score_adjustments(self, scores_df, optimize=True):
         """
         Apply adjustments to the raw scores based on specific rules.
         
         Args:
             scores_df (pd.DataFrame): DataFrame with raw scores
+            optimize (bool): Whether to use optimized algorithms
             
         Returns:
             pd.DataFrame: DataFrame with adjusted scores
@@ -189,99 +365,211 @@ class HeuristicScorer:
         # Create a copy of the input DataFrame
         adjusted_df = scores_df.copy()
         
-        # Apply adjustments based on business rules
+        if optimize:
+            # Vectorized adjustments - more efficient than row-by-row
+            
+            # 1. Heavy penalty for wallets with liquidations - vectorized
+            if 'liquidation_count_borrower' in adjusted_df.columns:
+                liquidated_wallets = adjusted_df['liquidation_count_borrower'] > 0
+                liquidation_count = adjusted_df.loc[liquidated_wallets, 'liquidation_count_borrower']
+                
+                if liquidated_wallets.any():
+                    logger.info(f"Applying liquidation penalty to {liquidated_wallets.sum()} wallets (vectorized)")
+                    
+                    # Calculate penalties - vectorized operations
+                    liquidation_penalty = np.minimum(liquidation_count * 0.1, 0.5)
+                    adjusted_df.loc[liquidated_wallets, 'raw_score'] *= (1 - liquidation_penalty)
+                    
+                    # Store adjustment reason
+                    if 'adjustments' not in adjusted_df.columns:
+                        adjusted_df['adjustments'] = pd.Series([{} for _ in range(len(adjusted_df))])
+                    
+                    # Record the adjustment for each wallet
+                    for idx in adjusted_df.index[liquidated_wallets]:
+                        if not isinstance(adjusted_df.at[idx, 'adjustments'], dict):
+                            adjusted_df.at[idx, 'adjustments'] = {}
+                        penalty = liquidation_penalty.loc[idx] if idx in liquidation_penalty.index else 0
+                        adjusted_df.at[idx, 'adjustments']['liquidation_penalty'] = -penalty
+            
+            # 2. Reward for wallets with good repayment behavior - vectorized
+            if all(col in adjusted_df.columns for col in ['repay_ratio', 'liquidation_count_borrower']):
+                good_repayers = (adjusted_df['repay_ratio'] > 0.9) & (adjusted_df['liquidation_count_borrower'] == 0)
+                
+                if good_repayers.any():
+                    logger.info(f"Applying good repayer bonus to {good_repayers.sum()} wallets (vectorized)")
+                    adjusted_df.loc[good_repayers, 'raw_score'] *= 1.1  # 10% bonus
+                    
+                    # Record the adjustment for each wallet
+                    for idx in adjusted_df.index[good_repayers]:
+                        if 'adjustments' not in adjusted_df.columns:
+                            adjusted_df['adjustments'] = pd.Series([{} for _ in range(len(adjusted_df))])
+                        if not isinstance(adjusted_df.at[idx, 'adjustments'], dict):
+                            adjusted_df.at[idx, 'adjustments'] = {}
+                        adjusted_df.at[idx, 'adjustments']['good_repayer_bonus'] = 0.1
+            
+            # 3. Penalty for extremely high loan-to-value ratios - vectorized
+            if 'max_ltv_alltime' in adjusted_df.columns:
+                high_ltv_wallets = adjusted_df['max_ltv_alltime'] > 0.9
+                
+                if high_ltv_wallets.any():
+                    logger.info(f"Applying high LTV penalty to {high_ltv_wallets.sum()} wallets (vectorized)")
+                    adjusted_df.loc[high_ltv_wallets, 'raw_score'] *= 0.9  # 10% reduction
+                    
+                    # Record the adjustment for each wallet
+                    for idx in adjusted_df.index[high_ltv_wallets]:
+                        if 'adjustments' not in adjusted_df.columns:
+                            adjusted_df['adjustments'] = pd.Series([{} for _ in range(len(adjusted_df))])
+                        if not isinstance(adjusted_df.at[idx, 'adjustments'], dict):
+                            adjusted_df.at[idx, 'adjustments'] = {}
+                        adjusted_df.at[idx, 'adjustments']['high_ltv_penalty'] = -0.1
+            
+            # 4. New: Consistency bonus - reward wallets with long history and low variability
+            if all(col in adjusted_df.columns for col in ['account_age_days', 'activity_consistency_stddev']):
+                consistent_users = (adjusted_df['account_age_days'] > 180) & (adjusted_df['activity_consistency_stddev'] < 5)
+                
+                if consistent_users.any():
+                    logger.info(f"Applying consistency bonus to {consistent_users.sum()} wallets (vectorized)")
+                    adjusted_df.loc[consistent_users, 'raw_score'] *= 1.05  # 5% bonus
+                    
+                    # Record the adjustment for each wallet
+                    for idx in adjusted_df.index[consistent_users]:
+                        if 'adjustments' not in adjusted_df.columns:
+                            adjusted_df['adjustments'] = pd.Series([{} for _ in range(len(adjusted_df))])
+                        if not isinstance(adjusted_df.at[idx, 'adjustments'], dict):
+                            adjusted_df.at[idx, 'adjustments'] = {}
+                        adjusted_df.at[idx, 'adjustments']['consistency_bonus'] = 0.05
+            
+            # 5. New: Inactivity penalty - penalize wallets with long periods of inactivity
+            if 'days_since_last_tx' in adjusted_df.columns:
+                inactive_wallets = adjusted_df['days_since_last_tx'] > 90  # Inactive for > 90 days
+                
+                if inactive_wallets.any():
+                    logger.info(f"Applying inactivity penalty to {inactive_wallets.sum()} wallets (vectorized)")
+                    
+                    # Calculate penalty based on inactivity duration - 5% penalty for each 30 days of inactivity, max 25%
+                    inactivity_days = adjusted_df.loc[inactive_wallets, 'days_since_last_tx']
+                    inactivity_penalty = np.minimum(0.05 * (inactivity_days / 30), 0.25)
+                    
+                    adjusted_df.loc[inactive_wallets, 'raw_score'] *= (1 - inactivity_penalty)
+                    
+                    # Record the adjustment for each wallet
+                    for idx in adjusted_df.index[inactive_wallets]:
+                        if 'adjustments' not in adjusted_df.columns:
+                            adjusted_df['adjustments'] = pd.Series([{} for _ in range(len(adjusted_df))])
+                        if not isinstance(adjusted_df.at[idx, 'adjustments'], dict):
+                            adjusted_df.at[idx, 'adjustments'] = {}
+                        penalty = inactivity_penalty.loc[idx] if idx in inactivity_penalty.index else 0
+                        adjusted_df.at[idx, 'adjustments']['inactivity_penalty'] = -penalty
         
-        # 1. Heavy penalty for wallets with liquidations
-        if 'liquidation_count_borrower' in adjusted_df.columns:
-            liquidated_wallets = adjusted_df['liquidation_count_borrower'] > 0
-            if liquidated_wallets.any():
-                logger.info(f"Applying liquidation penalty to {liquidated_wallets.sum()} wallets")
-                # Penalize proportionally to the number of liquidations, but cap the reduction
-                liquidation_penalty = np.minimum(
-                    adjusted_df['liquidation_count_borrower'] * 0.1,  # 10% per liquidation
-                    0.5  # Maximum 50% reduction
-                )
-                adjusted_df.loc[liquidated_wallets, 'raw_score'] *= (1 - liquidation_penalty)
+        else:
+            # Original implementation
+            # Apply adjustments based on business rules
+            
+            # 1. Heavy penalty for wallets with liquidations
+            if 'liquidation_count_borrower' in adjusted_df.columns:
+                liquidated_wallets = adjusted_df['liquidation_count_borrower'] > 0
+                if liquidated_wallets.any():
+                    logger.info(f"Applying liquidation penalty to {liquidated_wallets.sum()} wallets")
+                    # Penalize proportionally to the number of liquidations, but cap the reduction
+                    liquidation_penalty = np.minimum(
+                        adjusted_df.loc[liquidated_wallets, 'liquidation_count_borrower'] * 0.1,
+                        0.5  # Maximum 50% reduction
+                    )
+                    adjusted_df.loc[liquidated_wallets, 'raw_score'] *= (1 - liquidation_penalty)
+                    
+            # 2. Bonus for consistent repayments without liquidations
+            if all(col in adjusted_df.columns for col in ['repay_ratio', 'liquidation_count_borrower']):
+                good_repayers = (adjusted_df['repay_ratio'] > 0.9) & (adjusted_df['liquidation_count_borrower'] == 0)
+                if good_repayers.any():
+                    logger.info(f"Applying good repayer bonus to {good_repayers.sum()} wallets")
+                    adjusted_df.loc[good_repayers, 'raw_score'] *= 1.1  # 10% bonus
+                    
+            # 3. Penalty for extremely high loan-to-value ratios
+            if 'max_ltv_alltime' in adjusted_df.columns:
+                high_ltv_wallets = adjusted_df['max_ltv_alltime'] > 0.9
+                if high_ltv_wallets.any():
+                    logger.info(f"Applying high LTV penalty to {high_ltv_wallets.sum()} wallets")
+                    adjusted_df.loc[high_ltv_wallets, 'raw_score'] *= 0.9  # 10% reduction
         
-        # 2. Penalty for wallets with high time spent near liquidation
-        if 'time_near_liquidation_pct' in adjusted_df.columns:
-            high_risk_wallets = adjusted_df['time_near_liquidation_pct'] > 0.5  # >50% time near liquidation
-            if high_risk_wallets.any():
-                logger.info(f"Applying high-risk penalty to {high_risk_wallets.sum()} wallets")
-                high_risk_penalty = adjusted_df['time_near_liquidation_pct'] * 0.3  # Up to 30% reduction
-                adjusted_df.loc[high_risk_wallets, 'raw_score'] *= (1 - high_risk_penalty)
-        
-        # 3. Bonus for long-term consistent users
-        if 'wallet_age_days' in adjusted_df.columns and 'tx_count' in adjusted_df.columns:
-            # Identify wallets with both long age (>180 days) and consistent activity (>10 transactions)
-            long_term_users = (adjusted_df['wallet_age_days'] > 180) & (adjusted_df['tx_count'] > 10)
-            if long_term_users.any():
-                logger.info(f"Applying long-term user bonus to {long_term_users.sum()} wallets")
-                # Bonus up to 10%
-                long_term_bonus = 0.1
-                adjusted_df.loc[long_term_users, 'raw_score'] *= (1 + long_term_bonus)
-        
-        # 4. Cap the adjusted score at 1.0
-        adjusted_df['raw_score'] = np.minimum(adjusted_df['raw_score'], 1.0)
-        
-        # Log adjusted score stats
-        logger.info(f"Adjusted score - Min: {adjusted_df['raw_score'].min()}, Max: {adjusted_df['raw_score'].max()}, Mean: {adjusted_df['raw_score'].mean()}")
+        # Log adjustments
+        logger.info(f"After adjustments - Raw score min: {adjusted_df['raw_score'].min()}, max: {adjusted_df['raw_score'].max()}, mean: {adjusted_df['raw_score'].mean()}")
         
         return adjusted_df
     
-    def score_wallets(self):
+    def score_wallets(self, optimize=True):
         """
         Score wallets using the heuristic model.
         
-        Returns:
-            pd.DataFrame: Wallet scores
-        """
-        # Load features
-        features_df = self.load_features()
+        Args:
+            optimize (bool): Whether to use optimized algorithms
         
-        # Load anomaly scores if available
+        Returns:
+            pd.DataFrame: DataFrame with scored wallets
+        """
+        logger.info(f"Scoring wallets using heuristic model with optimization={'enabled' if optimize else 'disabled'}...")
+        
+        # Check for cached scores to avoid reprocessing
+        scores_cache_file = os.path.join(config.CACHE_DIR, "wallet_scores.pkl")
+        if optimize and os.path.exists(scores_cache_file):
+            # Check if any input data is newer than the scores file
+            features_file = os.path.join(self.processed_data_dir, "wallet_features.parquet")
+            anomaly_file = os.path.join(self.processed_data_dir, "anomaly_scores.parquet")
+            
+            scores_mtime = os.path.getmtime(scores_cache_file)
+            features_is_newer = os.path.exists(features_file) and os.path.getmtime(features_file) > scores_mtime
+            anomaly_is_newer = os.path.exists(anomaly_file) and os.path.getmtime(anomaly_file) > scores_mtime
+            
+            if not features_is_newer and not anomaly_is_newer:
+                logger.info(f"Loading cached wallet scores from {scores_cache_file}")
+                try:
+                    with open(scores_cache_file, 'rb') as f:
+                        wallet_scores = pickle.load(f)
+                    logger.info(f"Loaded {len(wallet_scores)} wallet scores from cache")
+                    return wallet_scores
+                except Exception as e:
+                    logger.warning(f"Error loading cached scores: {str(e)}")
+        
+        # Load input data
+        features_df = self.load_features()
         anomaly_df = self.load_anomaly_scores()
         
         # Prepare features for scoring
         scoring_df = self.prepare_features(features_df, anomaly_df)
         
         # Calculate weighted scores
-        scores_df = self.calculate_weighted_score(scoring_df)
+        scores_df = self.calculate_weighted_score(scoring_df, optimize=optimize)
         
-        # Apply score adjustments
-        adjusted_df = self.apply_score_adjustments(scores_df)
+        # Apply adjustments
+        final_df = self.apply_score_adjustments(scores_df, optimize=optimize)
         
-        # Scale score to 0-100 range
-        final_df = adjusted_df.copy()
-        final_df['credit_score'] = np.round(final_df['raw_score'] * 100)
-        
-        # Create readable grade levels
-        bins = [0, 20, 40, 60, 80, 100]
-        labels = ['F', 'D', 'C', 'B', 'A']
-        final_df['credit_grade'] = pd.cut(final_df['credit_score'], bins=bins, labels=labels)
-        
-        # Select columns for output
-        result_df = final_df[['wallet', 'credit_score', 'credit_grade', 'raw_score']].copy()
-        
-        # Sort by credit score (descending)
-        result_df = result_df.sort_values('credit_score', ascending=False)
-        
-        # Save results
+        # Save wallet scores for later use
         output_file = os.path.join(self.processed_data_dir, "wallet_scores.parquet")
-        result_df.to_parquet(output_file, index=False)
-        logger.info(f"Saved wallet scores for {len(result_df)} wallets to {output_file}")
+        final_df.to_parquet(output_file, index=False)
+        logger.info(f"Saved {len(final_df)} wallet scores to {output_file}")
         
-        return result_df
+        # Cache results if optimization is enabled
+        if optimize:
+            try:
+                with open(scores_cache_file, 'wb') as f:
+                    pickle.dump(final_df, f)
+                logger.info(f"Cached {len(final_df)} wallet scores to {scores_cache_file}")
+            except Exception as e:
+                logger.warning(f"Failed to cache scores: {str(e)}")
+        
+        return final_df
 
 def main():
     """
-    Main function to run the heuristic scorer.
+    Run heuristic scoring as a standalone script.
     """
-    scorer = HeuristicScorer()
-    scores_df = scorer.score_wallets()
-    print(f"Scored {len(scores_df)} wallets")
-    print("\nTop 5 wallets by credit score:")
-    print(scores_df.head())
+    import argparse
     
+    parser = argparse.ArgumentParser(description="Score wallets using heuristic model")
+    parser.add_argument('--no-optimize', action='store_true', help='Disable algorithmic optimizations')
+    args = parser.parse_args()
+    
+    heuristic_scorer = HeuristicScorer()
+    heuristic_scorer.score_wallets(optimize=not args.no_optimize)
+
 if __name__ == "__main__":
     main() 
