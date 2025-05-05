@@ -43,6 +43,7 @@ def setup():
     os.makedirs(config.RAW_DATA_DIR, exist_ok=True)
     os.makedirs(config.PROCESSED_DATA_DIR, exist_ok=True)
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
+    os.makedirs(config.CACHE_DIR, exist_ok=True)
     
     # Log system information
     logger.info(f"Starting Compound V2 wallet scoring pipeline")
@@ -59,12 +60,13 @@ def setup():
             raise RuntimeError("Dataset download failed")
         extract_largest_files()
 
-def run_pipeline(skip_to=None):
+def run_pipeline(skip_to=None, optimize=True):
     """
     Run the complete wallet scoring pipeline.
     
     Args:
         skip_to (str, optional): Stage to skip to (for resuming pipeline)
+        optimize (bool): Whether to use optimized algorithms
     """
     start_time = time.time()
     
@@ -76,42 +78,42 @@ def run_pipeline(skip_to=None):
         if skip_to is None or skip_to == 'load':
             logger.info("STAGE 1: Loading Data")
             data_loader = DataLoader()
-            transaction_df = data_loader.load_and_process_data()
+            transaction_df = data_loader.load_and_process_data(optimize=optimize)
             logger.info(f"Loaded {len(transaction_df)} transactions")
         
         # 2. Preprocess data
         if skip_to is None or skip_to in ('load', 'preprocess'):
             logger.info("STAGE 2: Preprocessing Data")
             preprocessor = DataPreprocessor()
-            transaction_df, wallet_df = preprocessor.process()
+            transaction_df, wallet_df = preprocessor.process(optimize=optimize)
             logger.info(f"Preprocessed {len(transaction_df)} transactions for {len(wallet_df)} wallets")
         
         # 3. Generate features
         if skip_to is None or skip_to in ('load', 'preprocess', 'features'):
             logger.info("STAGE 3: Feature Engineering")
             feature_engineer = FeatureEngineer()
-            features_df = feature_engineer.generate_all_features()
+            features_df = feature_engineer.generate_all_features(optimize=optimize)
             logger.info(f"Generated features for {len(features_df)} wallets")
         
         # 4. Anomaly detection
         if skip_to is None or skip_to in ('load', 'preprocess', 'features', 'anomaly'):
             logger.info("STAGE 4: Anomaly Detection")
             anomaly_detector = AnomalyDetector()
-            anomaly_df = anomaly_detector.detect_anomalies()
+            anomaly_df = anomaly_detector.detect_anomalies(optimize=optimize)
             logger.info(f"Detected anomalies in {anomaly_df['is_anomaly'].sum()} of {len(anomaly_df)} wallets")
         
         # 5. Heuristic scoring
         if skip_to is None or skip_to in ('load', 'preprocess', 'features', 'anomaly', 'heuristic'):
             logger.info("STAGE 5: Heuristic Scoring")
             heuristic_scorer = HeuristicScorer()
-            heuristic_df = heuristic_scorer.score_wallets()
+            heuristic_df = heuristic_scorer.score_wallets(optimize=optimize)
             logger.info(f"Scored {len(heuristic_df)} wallets using heuristic model")
         
         # 6. Final scoring and output
         if skip_to is None or skip_to in ('load', 'preprocess', 'features', 'anomaly', 'heuristic', 'score'):
             logger.info("STAGE 6: Final Scoring and Output")
             wallet_scorer = WalletScorer()
-            output_df = wallet_scorer.generate_scores()
+            output_df = wallet_scorer.generate_scores(optimize=optimize)
             logger.info(f"Generated final scores for top {len(output_df)} wallets")
         
         # Calculate runtime
@@ -134,6 +136,7 @@ def parse_arguments():
     
     parser.add_argument('--skip-to', type=str, choices=['load', 'preprocess', 'features', 'anomaly', 'heuristic', 'score'],
                         help='Skip to a specific stage in the pipeline (for resuming)')
+    parser.add_argument('--no-optimize', action='store_true', help='Disable algorithmic optimizations')
     
     return parser.parse_args()
 
@@ -142,7 +145,7 @@ def main():
     Main function.
     """
     args = parse_arguments()
-    run_pipeline(skip_to=args.skip_to)
+    run_pipeline(skip_to=args.skip_to, optimize=not args.no_optimize)
 
 if __name__ == "__main__":
     main() 
