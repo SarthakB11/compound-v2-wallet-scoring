@@ -1,16 +1,17 @@
 """
-Anomaly detection model for identifying unusual wallet behavior.
+Anomaly detection for wallet behavior.
 """
 import os
 import logging
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import IsolationForest
-from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.ensemble import IsolationForest
+from sklearn.svm import OneClassSVM
 import joblib
 
+from src.utils.helpers import save_dataframe
 import src.config as config
 
 logger = logging.getLogger(__name__)
@@ -20,98 +21,73 @@ class AnomalyDetector:
     Class for detecting anomalous wallet behavior.
     """
     
-    def __init__(self, processed_data_dir=None):
+    def __init__(self, model_dir=None, processed_dir=None, model_params=None):
         """
-        Initialize the AnomalyDetector.
+        Initialize the anomaly detector.
         
         Args:
-            processed_data_dir (str, optional): Directory containing processed data
+            model_dir (str, optional): Directory to save/load models
+            processed_dir (str, optional): Directory with processed data
+            model_params (dict, optional): Model parameters
         """
-        self.processed_data_dir = processed_data_dir or config.PROCESSED_DATA_DIR
-        self.models_dir = os.path.join(os.path.dirname(self.processed_data_dir), "models")
+        self.model_dir = model_dir or os.path.join(config.DATA_DIR, "models")
+        self.processed_dir = processed_dir or config.PROCESSED_DATA_DIR
+        self.model_params = model_params or config.ANOMALY_DETECTION
         
-        # Anomaly detection parameters
-        self.model_type = config.ANOMALY_DETECTION.get('model', 'isolation_forest')
-        self.contamination = config.ANOMALY_DETECTION.get('contamination', 0.05)
-        self.random_state = config.ANOMALY_DETECTION.get('random_state', 42)
+        # Create model directory if it doesn't exist
+        os.makedirs(self.model_dir, exist_ok=True)
         
-        # Ensure directories exist
-        os.makedirs(self.processed_data_dir, exist_ok=True)
-        os.makedirs(self.models_dir, exist_ok=True)
-    
-    def load_features(self):
-        """
-        Load wallet features.
-        
-        Returns:
-            pd.DataFrame: Wallet features
-        """
-        features_file_path = os.path.join(self.processed_data_dir, "wallet_features.parquet")
-        if not os.path.exists(features_file_path):
-            raise FileNotFoundError(f"Features file not found: {features_file_path}")
-        
-        features_df = pd.read_parquet(features_file_path)
-        logger.info(f"Loaded features for {len(features_df)} wallets from {features_file_path}")
-        
-        return features_df
+        # File paths
+        self.features_file = os.path.join(self.processed_dir, "wallet_features.parquet")
+        self.anomaly_scores_file = os.path.join(self.processed_dir, "anomaly_scores.parquet")
+        self.scaler_file = os.path.join(self.model_dir, "scaler.joblib")
+        self.model_file = os.path.join(self.model_dir, "anomaly_model.joblib")
     
     def preprocess_features(self, features_df):
         """
-        Preprocess features for anomaly detection.
+        Preprocess the features for anomaly detection.
         
         Args:
-            features_df (pd.DataFrame): Wallet features
+            features_df (pd.DataFrame): DataFrame with wallet features
             
         Returns:
-            tuple: (wallet_addresses, preprocessed_features)
+            tuple: Wallet addresses, preprocessed features, feature column names
         """
         logger.info("Preprocessing features for anomaly detection...")
         
-        # Extract wallet addresses
+        # Drop non-feature columns
+        feature_columns = [col for col in features_df.columns 
+                          if col not in ['wallet', 'first_tx_timestamp', 'last_tx_timestamp']]
+        
+        # Get wallet addresses
         wallet_addresses = features_df['wallet'].values
         
-        # Select numerical features only
-        feature_columns = [col for col in features_df.columns 
-                          if col != 'wallet' 
-                          and features_df[col].dtype in ['int64', 'float64']]
-        
-        # Deal with potential infinite values
-        features_df = features_df.replace([np.inf, -np.inf], np.nan)
-        
-        # Fill any remaining NaN values with column medians
-        for col in feature_columns:
-            if features_df[col].isna().any():
-                median_val = features_df[col].median()
-                features_df[col] = features_df[col].fillna(median_val)
+        # Extract features
+        X = features_df[feature_columns].values
         
         # Scale features
         scaler = StandardScaler()
-        scaled_features = scaler.fit_transform(features_df[feature_columns])
+        scaled_features = scaler.fit_transform(X)
         
-        # Save the scaler
-        scaler_path = os.path.join(self.models_dir, "scaler.joblib")
-        joblib.dump(scaler, scaler_path)
-        logger.info(f"Saved feature scaler to {scaler_path}")
+        # Save scaler for future use
+        joblib.dump(scaler, self.scaler_file)
+        logger.info(f"Saved feature scaler to {self.scaler_file}")
         
-        # Optionally, apply PCA for dimensionality reduction
-        # This is helpful for high-dimensional feature spaces
-        if len(feature_columns) > 10:
-            logger.info(f"Applying PCA to reduce dimensions from {len(feature_columns)}")
-            pca = PCA(n_components=min(10, len(feature_columns)), random_state=self.random_state)
+        # Apply PCA for dimension reduction
+        num_components = min(10, len(wallet_addresses) - 1, len(feature_columns))
+        logger.info(f"Applying PCA to reduce dimensions from {len(feature_columns)}")
+        if num_components > 0:
+            pca = PCA(n_components=num_components)
             reduced_features = pca.fit_transform(scaled_features)
-            
-            # Save the PCA model
-            pca_path = os.path.join(self.models_dir, "pca.joblib")
-            joblib.dump(pca, pca_path)
-            logger.info(f"Saved PCA model to {pca_path}")
-            
+            logger.info(f"Reduced dimensions to {num_components} components")
             return wallet_addresses, reduced_features, feature_columns
-        
-        return wallet_addresses, scaled_features, feature_columns
+        else:
+            logger.info("Skipping PCA due to insufficient samples")
+            return wallet_addresses, scaled_features, feature_columns
     
-    def train_model(self, features):
+    def train_isolation_forest(self, features):
         """
-        Train an anomaly detection model.
+        Train an Isolation Forest model for anomaly detection.
         
         Args:
             features (np.ndarray): Preprocessed features
@@ -119,149 +95,109 @@ class AnomalyDetector:
         Returns:
             object: Trained model
         """
-        logger.info(f"Training {self.model_type} model...")
-        
-        if self.model_type == 'isolation_forest':
-            model = IsolationForest(
-                contamination=self.contamination,
-                random_state=self.random_state,
-                n_jobs=-1  # Use all available processors
-            )
-        elif self.model_type == 'one_class_svm':
-            model = OneClassSVM(
-                nu=self.contamination,
-                kernel='rbf',
-                gamma='scale'
-            )
-        else:
-            raise ValueError(f"Unsupported model type: {self.model_type}")
-        
-        # Train the model
+        logger.info("Training Isolation Forest model...")
+        model = IsolationForest(
+            contamination=self.model_params.get('contamination', 0.05),
+            random_state=self.model_params.get('random_state', 42),
+            n_estimators=100,
+            max_samples='auto'
+        )
         model.fit(features)
-        
-        # Save the model
-        model_path = os.path.join(self.models_dir, f"{self.model_type}.joblib")
-        joblib.dump(model, model_path)
-        logger.info(f"Saved trained model to {model_path}")
-        
         return model
     
-    def score_anomalies(self, model, features, wallet_addresses):
+    def train_one_class_svm(self, features):
         """
-        Score the anomalies and create a DataFrame with results.
+        Train a One-Class SVM model for anomaly detection.
         
         Args:
-            model (object): Trained anomaly detection model
             features (np.ndarray): Preprocessed features
-            wallet_addresses (np.ndarray): Wallet addresses
             
         Returns:
-            pd.DataFrame: Anomaly scores for each wallet
+            object: Trained model
         """
-        logger.info("Scoring anomalies...")
+        logger.info("Training One-Class SVM model...")
+        model = OneClassSVM(
+            nu=self.model_params.get('contamination', 0.05),
+            kernel='rbf',
+            gamma='scale'
+        )
+        model.fit(features)
+        return model
+    
+    def create_anomaly_scores(self, wallet_addresses, features, model):
+        """
+        Create a DataFrame with anomaly scores.
         
+        Args:
+            wallet_addresses (np.ndarray): Wallet addresses
+            features (np.ndarray): Preprocessed features
+            model (object): Trained anomaly detection model
+            
+        Returns:
+            pd.DataFrame: DataFrame with anomaly scores
+        """
         # Get anomaly scores
-        if self.model_type == 'isolation_forest':
-            # For Isolation Forest, convert to anomaly score (higher = more anomalous)
-            raw_scores = -model.decision_function(features)
-        elif self.model_type == 'one_class_svm':
-            # For One-Class SVM, convert to anomaly score (higher = more anomalous)
-            raw_scores = -model.decision_function(features)
+        if hasattr(model, 'decision_function'):
+            # Isolation Forest or One-Class SVM
+            raw_scores = model.decision_function(features)
+            # Convert to a 0-1 anomaly score (higher is more anomalous)
+            anomaly_scores = 1 - (raw_scores - np.min(raw_scores)) / (np.max(raw_scores) - np.min(raw_scores) + 1e-10)
         else:
-            raise ValueError(f"Unsupported model type: {self.model_type}")
+            # Fallback for models without decision_function
+            predictions = model.predict(features)
+            # Convert predictions (-1 for anomalies, 1 for normal) to scores
+            anomaly_scores = np.where(predictions == -1, 0.9, 0.1)
         
-        # Normalize scores to [0, 1] range
-        if len(raw_scores) > 1:
-            min_score = np.min(raw_scores)
-            max_score = np.max(raw_scores)
-            if max_score > min_score:
-                normalized_scores = (raw_scores - min_score) / (max_score - min_score)
-            else:
-                normalized_scores = np.zeros_like(raw_scores)
-        else:
-            normalized_scores = np.array([0.5])  # Default for single wallet
+        # Flag anomalies
+        is_anomaly = model.predict(features) == -1
         
-        # Create DataFrame with wallet addresses and anomaly scores
+        # Create DataFrame
         anomaly_df = pd.DataFrame({
             'wallet': wallet_addresses,
-            'anomaly_score': normalized_scores,
-            'is_anomaly': model.predict(features) == -1  # -1 indicates anomaly in sklearn
+            'anomaly_score': anomaly_scores,
+            'is_anomaly': is_anomaly
         })
         
-        # Calculate percentile rank for each score
-        anomaly_df['anomaly_percentile'] = anomaly_df['anomaly_score'].rank(pct=True) * 100
-        
-        # Save the anomaly scores
-        scores_path = os.path.join(self.processed_data_dir, "anomaly_scores.parquet")
-        anomaly_df.to_parquet(scores_path, index=False)
-        logger.info(f"Saved anomaly scores for {len(anomaly_df)} wallets to {scores_path}")
-        
-        # Log summary statistics
-        anomaly_count = anomaly_df['is_anomaly'].sum()
-        logger.info(f"Detected {anomaly_count} anomalous wallets ({anomaly_count/len(anomaly_df)*100:.2f}%)")
+        logger.info(f"Identified {anomaly_df['is_anomaly'].sum()} anomalous wallets out of {len(anomaly_df)}")
         
         return anomaly_df
     
     def detect_anomalies(self):
         """
-        Run the full anomaly detection pipeline.
+        Detect anomalies in wallet behavior.
         
         Returns:
-            pd.DataFrame: Anomaly scores for each wallet
+            pd.DataFrame: DataFrame with anomaly scores
         """
         # Load features
-        features_df = self.load_features()
+        features_df = pd.read_parquet(self.features_file)
+        logger.info(f"Loaded features for {len(features_df)} wallets from {self.features_file}")
         
         # Preprocess features
         wallet_addresses, preprocessed_features, feature_columns = self.preprocess_features(features_df)
         
-        # Train model
-        model = self.train_model(preprocessed_features)
+        # Train model based on the selected method
+        model_type = self.model_params.get('model', 'isolation_forest')
         
-        # Score anomalies
-        anomaly_df = self.score_anomalies(model, preprocessed_features, wallet_addresses)
+        if model_type == 'isolation_forest':
+            model = self.train_isolation_forest(preprocessed_features)
+        elif model_type == 'one_class_svm':
+            model = self.train_one_class_svm(preprocessed_features)
+        else:
+            raise ValueError(f"Invalid model type: {model_type}")
         
-        # Optionally, analyze feature importance for anomalies
-        if self.model_type == 'isolation_forest' and len(feature_columns) > 0:
-            self.analyze_feature_importance(model, feature_columns, anomaly_df)
+        # Save the model
+        joblib.dump(model, self.model_file)
+        logger.info(f"Saved anomaly detection model to {self.model_file}")
+        
+        # Create anomaly scores
+        anomaly_df = self.create_anomaly_scores(wallet_addresses, preprocessed_features, model)
+        
+        # Save results
+        save_dataframe(anomaly_df, self.anomaly_scores_file)
+        logger.info(f"Saved anomaly scores to {self.anomaly_scores_file}")
         
         return anomaly_df
-    
-    def analyze_feature_importance(self, model, feature_columns, anomaly_df):
-        """
-        Analyze feature importance for anomaly detection.
-        
-        Args:
-            model (object): Trained model
-            feature_columns (list): Feature column names
-            anomaly_df (pd.DataFrame): Anomaly scores
-        """
-        if not hasattr(model, 'feature_importances_'):
-            logger.info("Feature importance analysis not available for this model")
-            return
-        
-        # Get feature importances
-        importances = model.feature_importances_
-        
-        # Create DataFrame with feature importances
-        importance_df = pd.DataFrame({
-            'feature': feature_columns,
-            'importance': importances
-        })
-        
-        # Sort by importance
-        importance_df = importance_df.sort_values('importance', ascending=False)
-        
-        # Save the feature importances
-        importance_path = os.path.join(self.processed_data_dir, "feature_importances.csv")
-        importance_df.to_csv(importance_path, index=False)
-        logger.info(f"Saved feature importances to {importance_path}")
-        
-        # Log top important features
-        top_features = importance_df.head(5)
-        logger.info("Top features contributing to anomaly detection:")
-        for i, (feature, importance) in enumerate(zip(top_features['feature'], top_features['importance'])):
-            logger.info(f"{i+1}. {feature}: {importance:.4f}")
 
 def main():
     """
@@ -269,11 +205,7 @@ def main():
     """
     detector = AnomalyDetector()
     anomaly_df = detector.detect_anomalies()
-    
-    print(f"Detected anomalies in {len(anomaly_df)} wallets")
-    print(f"Number of anomalous wallets: {anomaly_df['is_anomaly'].sum()}")
-    print("\nSample anomaly scores:")
-    print(anomaly_df.sort_values('anomaly_score', ascending=False).head())
+    print(f"Detected {anomaly_df['is_anomaly'].sum()} anomalous wallets out of {len(anomaly_df)}")
     
 if __name__ == "__main__":
     main() 
