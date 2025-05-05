@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
+import glob
 
 # Configure logging
 logging.basicConfig(
@@ -17,19 +18,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_largest_files(directory, n=3):
+def get_largest_files(directory, n=3, pattern=None):
     """
-    Get the n largest files from a directory.
+    Get the n largest files from a directory, optionally filtering by pattern.
     
     Args:
         directory (str): Path to the directory
         n (int): Number of files to return
+        pattern (str, optional): Glob pattern to filter files (e.g., "*.json")
         
     Returns:
         list: List of file paths, sorted by size (largest first)
     """
-    files = [(os.path.join(directory, f), os.path.getsize(os.path.join(directory, f))) 
-             for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+    # Get files matching the pattern if provided
+    if pattern:
+        file_paths = glob.glob(os.path.join(directory, pattern))
+        files = [(f, os.path.getsize(f)) for f in file_paths if os.path.isfile(f)]
+    else:
+        files = [(os.path.join(directory, f), os.path.getsize(os.path.join(directory, f))) 
+                for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
     
     # Sort by file size (descending)
     files.sort(key=lambda x: x[1], reverse=True)
