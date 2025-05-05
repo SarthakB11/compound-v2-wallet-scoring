@@ -165,23 +165,98 @@ class DataLoader:
                 # List of transaction objects
                 df = pd.DataFrame(data)
             elif isinstance(data, dict):
+                # Real Compound V2 data format has keys like 'deposits', 'borrows', etc.
                 # Check if it's a dictionary with transaction arrays
-                if any(key in data for key in self.event_types):
+                compound_v2_event_types = {
+                    'deposits': 'Mint',
+                    'withdraws': 'Redeem',
+                    'borrows': 'Borrow',
+                    'repays': 'RepayBorrow',
+                    'liquidations': 'LiquidateBorrow'
+                }
+                
+                if any(key in data for key in compound_v2_event_types.keys()):
                     # Combine different event types into one DataFrame
                     dfs = []
-                    for event_type in self.event_types:
-                        if event_type in data:
-                            event_df = pd.DataFrame(data[event_type])
-                            event_df['event_type'] = event_type
-                            dfs.append(event_df)
+                    for data_key, event_type in compound_v2_event_types.items():
+                        if data_key in data and isinstance(data[data_key], list):
+                            event_data = data[data_key]
+                            # Check if there's any data
+                            if event_data:
+                                # Transform nested structures
+                                transformed_data = []
+                                for item in event_data:
+                                    # Create a flattened version with standardized fields
+                                    transformed_item = {}
+                                    
+                                    # Extract account ID
+                                    if 'account' in item and isinstance(item['account'], dict) and 'id' in item['account']:
+                                        transformed_item['account'] = item['account']['id']
+                                    else:
+                                        transformed_item['account'] = None
+                                    
+                                    # Extract asset/token info
+                                    if 'asset' in item and isinstance(item['asset'], dict):
+                                        if 'id' in item['asset']:
+                                            transformed_item['token'] = item['asset']['id']
+                                        if 'symbol' in item['asset']:
+                                            transformed_item['token_symbol'] = item['asset']['symbol']
+                                    
+                                    # Copy basic fields
+                                    for field in ['amount', 'amountUSD', 'hash', 'timestamp']:
+                                        if field in item:
+                                            if field == 'hash':
+                                                transformed_item['transaction_hash'] = item[field]
+                                            else:
+                                                transformed_item[field] = item[field]
+                                    
+                                    # Add event type
+                                    transformed_item['event_type'] = event_type
+                                    
+                                    transformed_data.append(transformed_item)
+                                
+                                if transformed_data:
+                                    event_df = pd.DataFrame(transformed_data)
+                                    dfs.append(event_df)
                     
                     if dfs:
                         df = pd.concat(dfs, ignore_index=True)
                     else:
-                        raise ValueError(f"No recognized event types found in {file_path}")
+                        # If no Compound V2 data found, try the standard approach
+                        if any(key in data for key in self.event_types):
+                            # Combine different event types into one DataFrame
+                            dfs = []
+                            for event_type in self.event_types:
+                                if event_type in data:
+                                    event_df = pd.DataFrame(data[event_type])
+                                    event_df['event_type'] = event_type
+                                    dfs.append(event_df)
+                            
+                            if dfs:
+                                df = pd.concat(dfs, ignore_index=True)
+                            else:
+                                raise ValueError(f"No recognized event types found in {file_path}")
+                        else:
+                            # Single transaction object or unknown structure
+                            df = pd.DataFrame([data])
                 else:
-                    # Single transaction object or unknown structure
-                    df = pd.DataFrame([data])
+                    # Handle original format
+                    if any(key in data for key in self.event_types):
+                        # Combine different event types into one DataFrame
+                        dfs = []
+                        for event_type in self.event_types:
+                            if event_type in data:
+                                event_df = pd.DataFrame(data[event_type])
+                                event_df['event_type'] = event_type
+                                dfs.append(event_df)
+                        
+                        if dfs:
+                            df = pd.concat(dfs, ignore_index=True)
+                        else:
+                            raise ValueError(f"No recognized event types found in {file_path}")
+                    else:
+                        # Single transaction object or unknown structure
+                        df = pd.DataFrame([data])
             else:
                 raise ValueError(f"Unexpected JSON structure in {file_path}")
             
@@ -328,12 +403,15 @@ class DataLoader:
         
         return result
     
-    def load_and_process_data(self):
+    def load_and_process_data(self, optimize=True):
         """
-        Load and process all selected data files.
+        Load and process transaction data.
+        
+        Args:
+            optimize (bool): Whether to use optimized algorithms
         
         Returns:
-            pd.DataFrame: Combined processed data
+            pd.DataFrame: Processed transaction data
         """
         # Get input files
         input_files = self.get_input_files()
