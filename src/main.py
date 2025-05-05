@@ -3,10 +3,15 @@ Main module for the Compound V2 wallet scoring project.
 Orchestrates the entire pipeline from data loading to scoring.
 """
 import os
+import sys
 import logging
 import argparse
 import time
 from datetime import datetime
+from pathlib import Path
+
+# Add project root to Python path
+sys.path.append(str(Path(__file__).parent.parent.absolute()))
 
 from src.data.loader import DataLoader
 from src.data.preprocessor import DataPreprocessor
