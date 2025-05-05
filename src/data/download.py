@@ -177,12 +177,15 @@ def download_dataset():
     os.makedirs(config.RAW_DATA_DIR, exist_ok=True)
     
     try:
-        logger.info("Attempting to download dataset from Google Drive...")
+        logger.info("Downloading real Compound V2 dataset from Google Drive...")
         
         # Check if we have files already
         if os.listdir(config.RAW_DATA_DIR):
-            logger.info(f"Files already exist in {config.RAW_DATA_DIR}. Skipping download.")
-            return True
+            logger.info(f"Files already exist in {config.RAW_DATA_DIR}. Clearing directory to ensure fresh data.")
+            for file in os.listdir(config.RAW_DATA_DIR):
+                file_path = os.path.join(config.RAW_DATA_DIR, file)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
         
         # Create a temporary directory to download all files
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -191,15 +194,15 @@ def download_dataset():
             # Download the Google Drive folder
             success = download_gdrive_folder(DATASET_URL, temp_dir)
             if not success:
-                logger.error("Failed to download Google Drive folder")
-                
-                # Fall back to generating sample data
-                logger.info("Falling back to sample data generation")
-                generate_sample_data()
-                return True
+                logger.error("Failed to download real Compound V2 data from Google Drive")
+                return False
             
             # Get the largest files from the temp directory
             largest_files = get_largest_files(temp_dir, config.NUM_FILES_TO_PROCESS)
+            
+            if not largest_files:
+                logger.error("No data files found in the downloaded content")
+                return False
             
             # Copy the largest files to the raw data directory
             for i, file_path in enumerate(largest_files, 1):
@@ -212,16 +215,12 @@ def download_dataset():
                 file_size_mb = os.path.getsize(destination) / (1024 * 1024)
                 logger.info(f"Copied file {file_name} ({file_size_mb:.2f} MB)")
         
-        logger.info("Dataset download completed successfully")
+        logger.info("Real Compound V2 dataset download completed successfully")
         return True
         
     except Exception as e:
-        logger.error(f"Error downloading dataset: {str(e)}")
-        
-        # Fall back to generating sample data
-        logger.info("Falling back to sample data generation")
-        generate_sample_data()
-        return True
+        logger.error(f"Error downloading real Compound V2 dataset: {str(e)}")
+        return False
 
 def extract_largest_files():
     """
@@ -249,18 +248,19 @@ def main():
     """
     logger.info("Starting Compound V2 dataset download...")
     
-    # Download dataset
     success = download_dataset()
     if not success:
-        logger.error("Failed to download dataset")
-        return
-    
-    # Extract largest files
+        logger.error("Failed to download real Compound V2 dataset. Exiting program.")
+        sys.exit(1)
+        
     largest_files = extract_largest_files()
     
-    # Report success
-    logger.info(f"Successfully prepared {len(largest_files)} largest files for processing")
+    if not largest_files:
+        logger.error("No data files were found after download. Exiting program.")
+        sys.exit(1)
+        
+    logger.info("Successfully prepared {} largest files for processing".format(len(largest_files)))
     logger.info("You can now run the main pipeline to process these files")
-
+    
 if __name__ == "__main__":
     main() 
